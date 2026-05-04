@@ -321,3 +321,46 @@ MIT
 ## Powered by
 
 [paybridge](https://github.com/kobie3717/paybridge) — open-source unified payment SDK supporting 10+ providers
+
+## Changelog
+
+### v0.2.0 (2026-05-04) - 3-Layer Production Observatory
+
+**Pivot: sandbox-only → 3-layer monitoring**
+
+Layer 1: Vendor status page scraper (Statuspage.io API where available)
+Layer 2: Public HTTP probe of production endpoints (no auth, treats 401/4xx as alive)
+Layer 3: Sandbox health (unchanged from v0.1)
+
+#### Key Features
+
+- **Confidence scoring across layers**: low=single layer, medium=confirmed retry or 3+ consecutive, high=2+ layers agree
+- **Retry-once-before-persist**: On any 'down' signal, retry once after 5s to avoid false positives
+- **Divergence detection**: Surfaces the most interesting moment when vendor says fine but our probes disagree
+- **Multi-layer UI**: Frontend shows 3 mini-status indicators per provider plus overall computed from layer agreement
+- **Independent monitoring disclaimer**: Prominently displays "INDEPENDENT MONITORING. Not affiliated with any provider."
+
+#### API Endpoints
+
+- `GET /api/status` - Returns layered status for all providers with overall computed state
+- `GET /api/divergence` - Returns providers where layers disagree (vendor vs. probes)
+- `GET /api/about` - Updated methodology documentation
+
+#### Vendor Status Coverage
+
+Working (Statuspage.io):
+- Mercado Pago, Square, Flutterwave, Yoco
+
+Errors/Invalid Format:
+- Stripe (404), PayStack (404), Mollie (404), PayPal, Adyen, Razorpay, PayFast, MoonPay
+
+Not Available:
+- Ozow (DNS), Pesapal (DNS), SoftyComp, Peach Payments, Yellow Card
+
+#### Known Limitations
+
+- Single region (JNB). Multi-region in v0.3.
+- Sandbox layer only covers providers with creds in /root/paystatus/.env
+- Vendor scraper depends on Statuspage.io. Some providers use different status page systems or none at all.
+- May lag or differ from official provider status
+

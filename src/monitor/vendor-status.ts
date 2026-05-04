@@ -56,10 +56,29 @@ export async function runVendorStatusCheck(provider: string, statusHost: string)
       throw new Error(`HTTP ${response.status}`);
     }
 
-    const rawData = await response.json();
+    const contentType = response.headers.get('content-type') ?? '';
+    if (!contentType.includes('json')) {
+      console.log(`  ${provider}: vendor status page is not JSON (got ${contentType}), disabling`);
+      disabledHosts.add(statusHost);
+      await writeCheck(provider, 'unknown', latency, null, 'Status page does not expose Statuspage.io JSON API', 'low');
+      return;
+    }
+
+    let rawData: unknown;
+    try {
+      rawData = await response.json();
+    } catch {
+      console.log(`  ${provider}: vendor status page JSON parse failed, disabling`);
+      disabledHosts.add(statusHost);
+      await writeCheck(provider, 'unknown', latency, null, 'Status page returned invalid JSON', 'low');
+      return;
+    }
 
     if (!rawData || typeof rawData !== 'object' || !('status' in rawData) || !rawData.status || typeof rawData.status !== 'object' || !('indicator' in rawData.status)) {
-      throw new Error('Invalid status page response format');
+      console.log(`  ${provider}: vendor status page schema mismatch, disabling`);
+      disabledHosts.add(statusHost);
+      await writeCheck(provider, 'unknown', latency, null, 'Status page does not match Statuspage.io schema', 'low');
+      return;
     }
 
     const data = rawData as StatusPageResponse;
@@ -97,11 +116,15 @@ async function writeCheck(
   vendorDescription: string,
   confidence: 'low' | 'medium' | 'high'
 ): Promise<void> {
+  const sanitized = vendorDescription
+    .replace(/[\x00-\x1F\x7F]/g, '')
+    .slice(0, 500);
+
   await getPool().query(
     `INSERT INTO status_checks
       (provider, layer, status, latency_ms, vendor_indicator, vendor_description, confidence)
      VALUES ($1, 'vendor_status', $2, $3, $4, $5, $6)`,
-    [provider, status, latencyMs, vendorIndicator, vendorDescription.slice(0, 500), confidence]
+    [provider, status, latencyMs, vendorIndicator, sanitized, confidence]
   );
   console.log(`  ${provider} [vendor]: ${status} (${latencyMs}ms) [${confidence}]`);
 }
