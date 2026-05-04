@@ -28,6 +28,9 @@ app.use('/api', apiRouter);
 app.get('/lag/:id', async (req: Request, res: Response) => {
   try {
     const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).send('<html><body><h1>400 - Invalid id</h1></body></html>');
+    }
     const { getPool } = await import('./db');
 
     const eventResult = await getPool().query(
