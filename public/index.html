@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PayStatus - Independent Multi-Provider Payment Observatory</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <div class="disclaimer-banner" id="disclaimer-banner">
+      <div class="disclaimer-content">
+        <span class="disclaimer-icon">⚠</span>
+        <div class="disclaimer-text">
+          <strong>INDEPENDENT MONITORING. Not affiliated with any provider.</strong>
+          <p>Tracks vendor public status pages, HTTP probes from JNB, and sandbox health checks. May lag or differ from official status.</p>
+        </div>
+        <button class="disclaimer-close" onclick="document.getElementById('disclaimer-banner').style.display='none'">×</button>
+      </div>
+    </div>
+
+    <header>
+      <h1>paystatus</h1>
+      <p class="subtitle">Independent multi-provider payment observatory</p>
+    </header>
+
+    <div id="pulse" class="pulse">
+      <span id="pulse-indicator">●</span>
+      <span id="pulse-text">Loading...</span>
+      <span class="last-check">last check: <span id="last-check">—</span></span>
+    </div>
+
+    <section class="divergence-section" id="divergence-section" style="display: none;">
+      <h2>⚡ Divergences Detected</h2>
+      <div id="divergence-list" class="divergence-list"></div>
+    </section>
+
+    <section class="status-table-section">
+      <table class="status-table">
+        <thead>
+          <tr>
+            <th>Provider</th>
+            <th>Sandbox</th>
+            <th>Probe</th>
+            <th>Vendor</th>
+            <th>Overall</th>
+            <th>Latency</th>
+          </tr>
+        </thead>
+        <tbody id="status-body">
+          <tr>
+            <td colspan="6" class="loading">Loading provider status...</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="incidents-section">
+      <h2>Recent incidents</h2>
+      <div id="incidents-list" class="incidents-list">
+        <div class="loading">Loading incidents...</div>
+      </div>
+    </section>
+
+    <section class="subscribe-section">
+      <h2>Subscribe to incidents</h2>
+      <form id="subscribe-form" class="subscribe-form">
+        <input type="email" id="subscribe-email" placeholder="your@email.com" required>
+        <button type="submit">Subscribe</button>
+        <span class="subscribe-links">
+          <a href="/api/incidents?limit=100" target="_blank">RSS feed</a>
+          <span class="divider">|</span>
+          <a href="https://github.com/kobie3717/paystatus#webhook-api" target="_blank">Webhook</a>
+        </span>
+      </form>
+      <div id="subscribe-message" class="subscribe-message"></div>
+    </section>
+
+    <footer>
+      <p class="footer-disclaimer">
+        Probes from a single VPS in JNB. Results are observations, not authoritative.
+        For provider-confirmed status see their official page (Stripe.com/status, PayStack support, etc.).
+      </p>
+      <p>Powered by <a href="https://github.com/kobie3717/paybridge" target="_blank">paybridge</a> — open-source multi-provider payment SDK</p>
+    </footer>
+  </div>
+
+  <script>
+    const statusBody = document.getElementById('status-body');
+    const incidentsList = document.getElementById('incidents-list');
+    const pulseIndicator = document.getElementById('pulse-indicator');
+    const pulseText = document.getElementById('pulse-text');
+    const lastCheck = document.getElementById('last-check');
+    const subscribeForm = document.getElementById('subscribe-form');
+    const subscribeMessage = document.getElementById('subscribe-message');
+    const divergenceSection = document.getElementById('divergence-section');
+    const divergenceList = document.getElementById('divergence-list');
+
+    const statusSymbols = {
+      up: '●',
+      degraded: '⚠',
+      down: '✗',
+      unknown: '—'
+    };
+
+    const statusClasses = {
+      up: 'status-up',
+      degraded: 'status-degraded',
+      down: 'status-down',
+      unknown: 'status-unknown'
+    };
+
+    async function fetchStatus() {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+
+        const upCount = data.filter(p => p.overall === 'up').length;
+        const total = data.filter(p => p.overall !== 'unknown').length;
+
+        pulseIndicator.className = upCount === total ? 'pulse-up' : (upCount >= total * 0.8 ? 'pulse-degraded' : 'pulse-down');
+        pulseText.textContent = `${upCount}/${total} providers up`;
+
+        const now = new Date();
+        const allChecks = data.flatMap(p =>
+          Object.values(p.layers || {}).map(l => l.checkedAt).filter(Boolean)
+        ).map(t => new Date(t));
+        const lastCheckTime = allChecks.length > 0 ? new Date(Math.max(...allChecks)) : now;
+        const secAgo = Math.floor((now - lastCheckTime) / 1000);
+        lastCheck.textContent = secAgo < 60 ? `${secAgo}s ago` : `${Math.floor(secAgo / 60)}m ago`;
+
+        statusBody.innerHTML = data.map(p => {
+          const sandbox = p.layers.sandbox || {};
+          const httpProbe = p.layers.httpProbe || {};
+          const vendorStatus = p.layers.vendorStatus || {};
+
+          const sandboxSymbol = statusSymbols[sandbox.status] || '—';
+          const httpSymbol = statusSymbols[httpProbe.status] || '—';
+          const vendorSymbol = statusSymbols[vendorStatus.status] || '—';
+
+          const overallClass = statusClasses[p.overall] || '';
+          const overallSymbol = p.overall === 'up' ? '✅' : p.overall === 'degraded' ? '⚠' : p.overall === 'down' ? '🚨' : '—';
+
+          const avgLatency = [sandbox.latencyMs, httpProbe.latencyMs].filter(Boolean);
+          const latencyDisplay = avgLatency.length > 0
+            ? Math.round(avgLatency.reduce((a, b) => a + b, 0) / avgLatency.length) + 'ms'
+            : '—';
+
+          return `
+            <tr>
+              <td class="provider-name">${p.provider}</td>
+              <td class="${statusClasses[sandbox.status] || 'status-unknown'}">${sandboxSymbol}</td>
+              <td class="${statusClasses[httpProbe.status] || 'status-unknown'}">${httpSymbol}</td>
+              <td class="${statusClasses[vendorStatus.status] || 'status-unknown'}">${vendorSymbol}</td>
+              <td class="${overallClass}">${overallSymbol} ${p.overall}</td>
+              <td>${latencyDisplay}</td>
+            </tr>
+          `;
+        }).join('');
+      } catch (err) {
+        console.error('Failed to fetch status:', err);
+        statusBody.innerHTML = '<tr><td colspan="6" class="error">Failed to load status</td></tr>';
+      }
+    }
+
+    async function fetchDivergence() {
+      try {
+        const res = await fetch('/api/divergence');
+        const data = await res.json();
+
+        if (data.length === 0) {
+          divergenceSection.style.display = 'none';
+          return;
+        }
+
+        divergenceSection.style.display = 'block';
+        divergenceList.innerHTML = data.map(d => `
+          <div class="divergence-item">
+            <div class="divergence-header">
+              <span class="divergence-provider">${d.provider}</span>
+              <span class="divergence-type">${d.divergence.replace(/_/g, ' ')}</span>
+            </div>
+            <div class="divergence-details">${d.details}</div>
+          </div>
+        `).join('');
+      } catch (err) {
+        console.error('Failed to fetch divergence:', err);
+      }
+    }
+
+    async function fetchIncidents() {
+      try {
+        const res = await fetch('/api/incidents?limit=10');
+        const data = await res.json();
+
+        if (data.length === 0) {
+          incidentsList.innerHTML = '<div class="no-incidents">No recent incidents — all systems operational</div>';
+          return;
+        }
+
+        incidentsList.innerHTML = data.map(inc => {
+          const startedAt = new Date(inc.startedAt);
+          const resolvedAt = inc.resolvedAt ? new Date(inc.resolvedAt) : null;
+          const duration = resolvedAt ? Math.floor((resolvedAt - startedAt) / 60000) : null;
+
+          return `
+            <div class="incident ${inc.resolvedAt ? 'resolved' : 'active'}">
+              <div class="incident-header">
+                <span class="incident-date">${startedAt.toISOString().slice(0, 16).replace('T', ' ')}</span>
+                <span class="incident-provider">${inc.provider}</span>
+                <span class="incident-severity severity-${inc.severity}">${inc.severity}</span>
+                ${resolvedAt ? `<span class="incident-duration">${duration}m</span>` : '<span class="incident-active">active</span>'}
+              </div>
+              <div class="incident-summary">${inc.summary}</div>
+            </div>
+          `;
+        }).join('');
+      } catch (err) {
+        console.error('Failed to fetch incidents:', err);
+        incidentsList.innerHTML = '<div class="error">Failed to load incidents</div>';
+      }
+    }
+
+    subscribeForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = document.getElementById('subscribe-email').value;
+
+      try {
+        const res = await fetch('/api/subscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email })
+        });
+        const data = await res.json();
+
+        subscribeMessage.textContent = data.message || 'Subscribed successfully!';
+        subscribeMessage.className = 'subscribe-message success';
+        subscribeForm.reset();
+
+        setTimeout(() => {
+          subscribeMessage.textContent = '';
+          subscribeMessage.className = 'subscribe-message';
+        }, 5000);
+      } catch (err) {
+        console.error('Failed to subscribe:', err);
+        subscribeMessage.textContent = 'Subscription failed. Please try again.';
+        subscribeMessage.className = 'subscribe-message error';
+      }
+    });
+
+    // Initial load
+    fetchStatus();
+    fetchIncidents();
+    fetchDivergence();
+
+    // Refresh every 30 seconds
+    setInterval(fetchStatus, 30000);
+    setInterval(fetchIncidents, 60000);
+    setInterval(fetchDivergence, 30000);
+  </script>
+</body>
+</html>
