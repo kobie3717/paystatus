@@ -35,6 +35,7 @@ Every 60 seconds, PayStatus:
 5. Captures response shape and compares to baseline (drift detection)
 6. Records results to PostgreSQL with confidence level
 7. Opens/closes incidents automatically based on state transitions
+8. **Lag detection** — compares our independent probe results against vendor status pages to measure acknowledgement delay
 
 ## Methodology
 
@@ -68,6 +69,39 @@ Always verify with provider-confirmed status before assuming production impact:
 - **Mercado Pago** — https://status.mercadopago.com
 - **Pesapal** — https://www.pesapal.com
 
+## Vendor Lag Detection
+
+PayStatus records **lag events** when our independent probes detect an outage before a vendor's official status page acknowledges it.
+
+### How it works
+
+1. When sandbox or HTTP probes report `down` for 2+ consecutive ticks AND vendor status shows `up` → open a **pending lag event**
+2. When vendor status transitions to `down`/`degraded` → mark event as **confirmed**, compute lag in seconds
+3. When our probes recover without vendor acknowledgement → mark as **false alarm**
+4. After 6 hours pending without vendor acknowledgement → auto-resolve as false alarm
+
+### Why this matters
+
+Official status pages often lag reality. Vendors require internal confirmation before publishing incidents. PayStatus's independent observatory catches these gaps:
+
+> "PayBridge's independent observatory caught the Stripe outage 9 minutes before Stripe's status page admitted it."
+
+### API Endpoints
+
+- `GET /api/lag-events?limit=20&outcome=confirmed` — list confirmed lag events
+- `GET /api/lag-stats?days=30` — aggregate statistics (avg lag, max lag, by provider)
+- `GET /lag/:id` — permalink for individual lag event (SEO-optimized with OG tags)
+
+### Dashboard Display
+
+The public dashboard shows:
+- Total confirmed outages detected in the current month
+- Average lag time (how many minutes/seconds ahead we caught the issue)
+- Per-provider breakdown
+- Links to individual lag event permalinks for sharing
+
+False alarms are recorded in the database but not displayed publicly.
+
 ## Limitations
 
 This service has important constraints:
@@ -76,6 +110,7 @@ This service has important constraints:
 2. **Sandbox-only** — production endpoints may behave differently
 3. **Rate limits** — provider API limits may produce false positives
 4. **No SLA** — this is observational monitoring, not an authoritative status source
+5. **Lag detection depends on vendor status page accuracy** — some providers don't publish timely status updates
 
 ## Deploy on existing VPS
 

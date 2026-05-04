@@ -1,6 +1,8 @@
 import { runSandboxLoop } from './sandbox';
 import { runHTTPProbeLoop } from './http-probe';
 import { runVendorStatusLoop } from './vendor-status';
+import { runLagDetection } from './lag-detector';
+import { config } from '../config';
 
 interface MonitorIntervals {
   sandboxMs: number;
@@ -50,6 +52,20 @@ export function startMonitorLoop(intervals: MonitorIntervals): NodeJS.Timeout[] 
   const vendorStatusHandle = setInterval(vendorStatusTick, intervals.vendorStatusMs);
   if (vendorStatusHandle.unref) vendorStatusHandle.unref();
   handles.push(vendorStatusHandle);
+
+  const lagDetectionTick = async () => {
+    try {
+      await runLagDetection();
+    } catch (err) {
+      console.error('Lag detection error:', err);
+    }
+  };
+
+  if (config.lagDetection.enabled) {
+    const lagDetectionHandle = setInterval(lagDetectionTick, config.lagDetection.intervalMs);
+    if (lagDetectionHandle.unref) lagDetectionHandle.unref();
+    handles.push(lagDetectionHandle);
+  }
 
   return handles;
 }

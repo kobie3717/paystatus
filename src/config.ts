@@ -44,4 +44,10 @@ export const config = {
   },
 
   adminToken: process.env.PAYSTATUS_ADMIN_TOKEN,
+
+  lagDetection: {
+    enabled: process.env.LAG_DETECTION_ENABLED !== 'false',
+    minConsecutiveDownTicks: Number(process.env.LAG_MIN_CONSECUTIVE_DOWN ?? 2),
+    intervalMs: Number(process.env.LAG_DETECTION_INTERVAL_MS ?? 60_000),
+  },
 };

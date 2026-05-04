@@ -323,3 +323,140 @@ apiRouter.post('/subscribe', async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// GET /api/lag-events?limit=20&outcome=confirmed
+apiRouter.get('/lag-events', async (req: Request, res: Response) => {
+  try {
+    const limit = Math.min(Number(req.query.limit ?? 20), 100);
+    const outcome = (req.query.outcome as string) ?? 'confirmed';
+
+    const { rows } = await getPool().query(
+      `
+      SELECT
+        id,
+        provider,
+        our_detected_at AS "ourDetectedAt",
+        our_layer AS "ourLayer",
+        vendor_acknowledged_at AS "vendorAcknowledgedAt",
+        lag_seconds AS "lagSeconds",
+        resolved,
+        outcome,
+        summary,
+        created_at AS "createdAt"
+      FROM lag_events
+      WHERE outcome = $1
+      ORDER BY our_detected_at DESC
+      LIMIT $2
+      `,
+      [outcome, limit]
+    );
+
+    res.json(rows);
+  } catch (err: any) {
+    console.error('GET /api/lag-events error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/lag-events/:id
+apiRouter.get('/lag-events/:id', async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    const { rows } = await getPool().query(
+      `
+      SELECT
+        id,
+        provider,
+        our_detected_at AS "ourDetectedAt",
+        our_layer AS "ourLayer",
+        vendor_acknowledged_at AS "vendorAcknowledgedAt",
+        lag_seconds AS "lagSeconds",
+        resolved,
+        outcome,
+        summary,
+        created_at AS "createdAt"
+      FROM lag_events
+      WHERE id = $1
+      `,
+      [id]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Lag event not found' });
+    }
+
+    res.json(rows[0]);
+  } catch (err: any) {
+    console.error('GET /api/lag-events/:id error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/lag-stats
+apiRouter.get('/lag-stats', async (req: Request, res: Response) => {
+  try {
+    const windowDays = Number(req.query.days ?? 30);
+
+    const { rows } = await getPool().query<{
+      total: string;
+      avg_lag: string;
+      max_lag: string;
+    }>(
+      `
+      SELECT
+        COUNT(*)::text as total,
+        AVG(lag_seconds)::int::text as avg_lag,
+        MAX(lag_seconds)::text as max_lag
+      FROM lag_events
+      WHERE outcome = 'confirmed'
+        AND our_detected_at > now() - interval '1 day' * $1
+      `,
+      [windowDays]
+    );
+
+    const totalConfirmed = Number(rows[0]?.total ?? 0);
+    const averageLagSeconds = Number(rows[0]?.avg_lag ?? 0);
+    const maxLagSeconds = Number(rows[0]?.max_lag ?? 0);
+
+    const byProvider = await getPool().query<{
+      provider: string;
+      cnt: string;
+      avg_lag: string;
+      max_lag: string;
+    }>(
+      `
+      SELECT
+        provider,
+        COUNT(*)::text as cnt,
+        AVG(lag_seconds)::int::text as avg_lag,
+        MAX(lag_seconds)::text as max_lag
+      FROM lag_events
+      WHERE outcome = 'confirmed'
+        AND our_detected_at > now() - interval '1 day' * $1
+      GROUP BY provider
+      ORDER BY COUNT(*) DESC
+      `,
+      [windowDays]
+    );
+
+    const byProviderMap: Record<string, {count: number; avgLagSec: number; maxLagSec: number}> = {};
+    for (const row of byProvider.rows) {
+      byProviderMap[row.provider] = {
+        count: Number(row.cnt),
+        avgLagSec: Number(row.avg_lag),
+        maxLagSec: Number(row.max_lag),
+      };
+    }
+
+    res.json({
+      totalConfirmed,
+      averageLagSeconds,
+      maxLagSeconds,
+      byProvider: byProviderMap,
+      windowDays,
+    });
+  } catch (err: any) {
+    console.error('GET /api/lag-stats error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});

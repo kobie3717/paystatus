@@ -35,6 +35,16 @@
       <div id="divergence-list" class="divergence-list"></div>
     </section>
 
+    <section class="lag-events-section" id="lag-events-section" style="display: none;">
+      <h2>Vendor lag events</h2>
+      <p class="lag-subtitle">Outages we caught before official status pages admitted</p>
+      <div id="lag-stats" class="lag-stats"></div>
+      <div class="lag-disclaimer">
+        Independent monitoring. We measure how long our sandbox + HTTP probes detected an issue before the vendor's own status page acknowledged it. Vendor status pages publish only after internal confirmation.
+      </div>
+      <div id="lag-events-list" class="lag-events-list"></div>
+    </section>
+
     <section class="status-table-section">
       <table class="status-table">
         <thead>
@@ -95,6 +105,9 @@
     const subscribeMessage = document.getElementById('subscribe-message');
     const divergenceSection = document.getElementById('divergence-section');
     const divergenceList = document.getElementById('divergence-list');
+    const lagEventsSection = document.getElementById('lag-events-section');
+    const lagEventsList = document.getElementById('lag-events-list');
+    const lagStats = document.getElementById('lag-stats');
 
     const statusSymbols = {
       up: '●',
@@ -221,6 +234,47 @@
       }
     }
 
+    async function fetchLagEvents() {
+      try {
+        const [eventsRes, statsRes] = await Promise.all([
+          fetch('/api/lag-events?limit=10&outcome=confirmed'),
+          fetch('/api/lag-stats?days=30')
+        ]);
+        const events = await eventsRes.json();
+        const stats = await statsRes.json();
+
+        if (events.length === 0) {
+          lagEventsSection.style.display = 'none';
+          return;
+        }
+
+        lagEventsSection.style.display = 'block';
+
+        const avgMinutes = (stats.averageLagSeconds / 60).toFixed(1);
+        lagStats.innerHTML = `Detected ${stats.totalConfirmed} confirmed outages this month, average ${avgMinutes} min ahead of vendor.`;
+
+        lagEventsList.innerHTML = events.map(evt => {
+          const detectedAt = new Date(evt.ourDetectedAt);
+          const lagMinutes = Math.floor(evt.lagSeconds / 60);
+          const lagRemainderSeconds = evt.lagSeconds % 60;
+          const lagFormatted = `${lagMinutes}m ${lagRemainderSeconds}s ahead`;
+
+          return `
+            <div class="lag-event">
+              <div class="lag-event-row">
+                <span class="lag-provider">${evt.provider}</span>
+                <span class="lag-time">${lagFormatted}</span>
+                <span class="lag-date">${detectedAt.toISOString().slice(0, 16).replace('T', ' ')} SAST</span>
+                <a href="/lag/${evt.id}" class="lag-link">details →</a>
+              </div>
+            </div>
+          `;
+        }).join('');
+      } catch (err) {
+        console.error('Failed to fetch lag events:', err);
+      }
+    }
+
     subscribeForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const email = document.getElementById('subscribe-email').value;
@@ -252,11 +306,13 @@
     fetchStatus();
     fetchIncidents();
     fetchDivergence();
+    fetchLagEvents();
 
     // Refresh every 30 seconds
     setInterval(fetchStatus, 30000);
     setInterval(fetchIncidents, 60000);
     setInterval(fetchDivergence, 30000);
+    setInterval(fetchLagEvents, 60000);
   </script>
 </body>
 </html>
