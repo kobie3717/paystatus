@@ -151,8 +151,8 @@ app.get('/lag/:id', async (req: Request, res: Response) => {
 startMonitorLoop(config.probeIntervals);
 
 // Start server
-app.listen(config.port, () => {
-  console.log(`PayStatus v0.2.0 listening on port ${config.port}`);
+app.listen(config.port, '127.0.0.1', () => {
+  console.log(`PayStatus v0.2.0 listening on 127.0.0.1:${config.port}`);
   console.log(`Monitor intervals: sandbox=${config.probeIntervals.sandboxMs}ms, http=${config.probeIntervals.httpProbeMs}ms, vendor=${config.probeIntervals.vendorStatusMs}ms`);
 });
 
